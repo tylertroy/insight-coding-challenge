@@ -62,46 +62,13 @@ class Antifraud(object):
         """ Return trusted if payer and payee are connected to the 4th order. """
         return False
 
-    def write_output1(self):
-        """ Read stream data and write to output1.txt """
-        output = open(self.output1_path, 'w')
-        with codecs.open(self.stream_path, 'r', encoding='utf-8') as f:
-            for transaction in f:
-                try:
-                    transaction = transaction.split(',', 4)
-                    payee, payer = np.array(transaction[1:3]).astype(int)
-                    if self.output1_test(payee, payer):
-                        test = 'trusted\n'
-                    else:
-                        test = 'unverified\n'
-                    output.write(test)
-                except:
-                    pass
-        output.close()
-
-    def write_output2(self):
-        """ Read stream data and write to output1.txt """
-        output = open(self.output2_path, 'w')
-        with codecs.open(self.stream_path, 'r', encoding='utf-8') as f:
-            for transaction in f:
-                try:
-                    transaction = transaction.split(',', 4)
-                    payee, payer = np.array(transaction[1:3]).astype(int)
-                    if self.output1_test(payee, payer):
-                        test = 'trusted\n'
-                    if self.output2_test(payee, payer):
-                        test = 'trusted\n'
-                    else:
-                        test = 'unverified\n'
-                    output.write(test)
-                except:
-                    pass
-        output.close()
-
     def write_output(self):
+        """ Write output files after tests. """
+
         output1 = open(self.output1_path, 'w')
         output2 = open(self.output2_path, 'w')
         output3 = open(self.output3_path, 'w')
+
         with codecs.open(self.stream_path, 'r', encoding='utf-8') as f:
             for transaction in f:
                 try:
@@ -120,6 +87,7 @@ class Antifraud(object):
                             output2.write('unverified\n')
                 except:
                     pass
+
         output3.write("So close! Just plumb ran out of time.")
         output1.close()
         output2.close()
