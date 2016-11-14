@@ -2,10 +2,8 @@ import codecs
 import collections
 import bisect
 import re
-import numpy as np
 import sys
 
-from time import time
 
 class Antifraud(object):
     """ A payment verification class for the Paymo digital wallet."""
@@ -30,7 +28,7 @@ class Antifraud(object):
             transactions = [ line.split(',', 4)[1:3] 
                 for line in f if re.match(pattern, line) ]
         transactions = [ element for element in transactions if element != [] ]
-        transactions = np.array(transactions).astype(int)
+        transactions = [ (int(id1), int(id2)) for (id1, id2) in transactions ]
         self.transactions = transactions
 
     def build_network_from_batch(self):
@@ -48,13 +46,13 @@ class Antifraud(object):
                     open(self.output3_path, 'w') as output3:
         
             outputs = (output1, output2, output3)
-            degrees = (1, 2, 4)    
+            degrees = (1, 2, 4)
 
             for transaction in f:
                 try:
                     transaction = transaction.split(',', 4)
-                    id1, id2 = np.array(transaction[1:3]).astype(int)
-                except:
+                    id1, id2 = int(transaction[1]), int(transaction[2])
+                except (IndexError, ValueError, UnicodeEncodeError):
                     continue
                 
                 for output, degree in zip(outputs, degrees):
