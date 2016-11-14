@@ -1,104 +1,170 @@
-import os
-import sys
-import numpy as np
 import codecs
+import collections
+import bisect
+import re
+import numpy as np
+import sys
+
+from time import time
 
 class Antifraud(object):
-    """ Confirms the relationship between transaction parties. """
+    """ A payment verification class for the Paymo digital wallet."""
     def __init__(self, argv):
+        self.network = Network('Paymo')
+        
         self.batch_path = argv[1]
         self.stream_path = argv[2]
         self.output1_path = argv[3]
         self.output2_path = argv[4]
         self.output3_path = argv[5]
-        self.network = {}
-        self.run()
 
-    def load_network_data(self):
-        """ Load inital network state. """
-        names = ('time', 'id1', 'id2', 'amount', 'message')
-        transactions = pd.read_csv(self.batch_path, 
-            skiprows=1,
-            names=names,
-            encoding='utf-8',
-            error_bad_lines=False,
-            )
-        t = transactions
-        t = t[t['time'].astype(str).str.startswith('2016')]
-        t = t[['id1','id2']].astype(int)
-        self.transactions = t[['id1','id2']].values
-    
-    def load_network_state(self):
-        """ Load the data from batch_payment"""
+        self.verified = 'trusted\n'
+        self.unverified = 'unverified\n'
+
+    def load_transactions(self):
+        """Load batch data from self.batch_payment path."""
+        self.date_regex = r'\d+-\d+-\d+\s\d+:\d+:\d+'
+        pattern = re.compile(self.date_regex)
         with codecs.open(self.batch_path, encoding='utf-8') as f:
-            next(f) # skip header
-            transactions = [ line.split(',', 4)[1:3] for line in f ]
-            transactions = [ element for element in transactions if element != [] ]
-            transactions = np.array(transactions).astype(int)
-        self.users = np.unique(transactions)
+            self.batch_header = next(f) # skip header
+            transactions = [ line.split(',', 4)[1:3] 
+                for line in f if re.match(pattern, line) ]
+        transactions = [ element for element in transactions if element != [] ]
+        transactions = np.array(transactions).astype(int)
         self.transactions = transactions
 
-    def make_network(self):
-        """ Generate friendship network from batch data. """
-        self.network = { person : {person} for person in np.unique(self.transactions) }
-        for payer, payee in self.transactions:
-            self.network[payer].add(payee)
-            self.network[payee].add(payer)
+    def build_network_from_batch(self):
+        """ Add persons to network from bacth data."""
+        for (person1, person2) in self.transactions:
+            self.network.add_person(Person(person1))
+            self.network.add_person(Person(person2))
+            self.network.register_friendship(person1, person2)
 
+    def test_stream_data(self):
+        """Load stream data from stream data and check line-by-line."""
+        with codecs.open(self.stream_path, 'r', encoding='utf-8') as f, \
+                    open(self.output1_path, 'w') as output1, \
+                    open(self.output2_path, 'w') as output2, \
+                    open(self.output3_path, 'w') as output3:
+        
+            outputs = (output1, output2, output3)
+            degrees = (1, 2, 4)    
 
-    def output1_test(self, payee, payer):
-        """ Return trusted if payer and payee are in network. """
-        if payee in self.network[payer]:
-            return True
-        return False
-
-    def output2_test(self, payee, payer):
-        """ Return trusted if payer and payee have a mutual friend. """
-        if self.network[payee] & self.network[payer]:
-            return True
-        return False
-
-    def output3_test(self, payee, payer):
-        """ Return trusted if payer and payee are connected to the 4th order. """
-        return False
-
-    def write_output(self):
-        """ Write output files after tests. """
-
-        output1 = open(self.output1_path, 'w')
-        output2 = open(self.output2_path, 'w')
-        output3 = open(self.output3_path, 'w')
-
-        with codecs.open(self.stream_path, 'r', encoding='utf-8') as f:
             for transaction in f:
                 try:
                     transaction = transaction.split(',', 4)
-                    payee, payer = np.array(transaction[1:3]).astype(int)
-
-                    
-                    if self.output1_test(payee, payer):
-                        output1.write('trusted\n')
-                        output2.write('trusted\n')
-                    else: 
-                        output1.write('unverified\n')
-                        if self.output2_test(payee, payer):
-                            output2.write('trusted\n')
-                        else:
-                            output2.write('unverified\n')
+                    id1, id2 = np.array(transaction[1:3]).astype(int)
                 except:
-                    pass
-
-        output3.write("So close! Just plumb ran out of time.")
-        output1.close()
-        output2.close()
-        output3.close()
+                    continue
+                
+                for output, degree in zip(outputs, degrees):
+                    if self.network.find_degree(id1, id2, degree):
+                        output.write(self.verified)
+                    else:
+                        output.write(self.unverified)
 
     def run(self):
-        """ Combine the functions to test the data. """
-        self.load_network_state()
-        self.make_network()
-        self.write_output()
+        self.load_transactions()
+        self.build_network_from_batch()
+        self.test_stream_data()
+
+
+class Person(object):
+    """ A person object generated in the network."""
+    _infinity = float('inf')
+
+    def __init__(self, person_id):
+        """Create a new person in with an empty set of friends."""
+        self.id = person_id
+        self.friends = []
+
+        self.degree = self._infinity
+        self.checked = False
+
+    def add_friend(self, person_id):
+        """Add a new friend to the persons friendship network."""
+        if person_id not in self.friends:
+            bisect.insort(self.friends, person_id)
+
+    def reinitialize(self):
+        self.degree = self._infinity
+        self.checked = False
+
+
+class Network(object):
+    """A paymo friendship Network."""
+    def __init__(self, name):
+        self.name = name
+        self.members = {}
+        self.infinity = float('inf')
+
+    def add_person(self, person):
+        """Add a person to the network."""
+        if isinstance(person, Person) and person.id not in self.members:
+            self.members[person.id] = person
+            return True
+        else:
+            return False
+
+    def register_friendship(self, id1, id2):
+        """Make a connection or friendship between two members."""
+        if id1 in self.members and id2 in self.members:
+            self.members[id1].add_friend(id2)
+            self.members[id2].add_friend(id1)
+            return True
+        else:
+            return False
+
+    def reinitialize_persons(self):
+        """ Reinitialize checked and order  for person objects."""
+        for person in self.members.values():
+            person.reinitialize()
+
+    def find_degree(self, id1, id2, degree):
+        """Find the friendship order for the friends of a friend.""" 
+        if id1 in self.members[id2].friends: 
+                return True
+
+        queue = collections.deque()
+        person = self.members[id1] 
+        person.degree = 0
+        person.checked = True
+        for friend_id in person.friends:
+            self.members[friend_id].degree = person.degree + 1
+            queue.append(friend_id)
+
+        while queue:
+            friend_id = queue.popleft()
+            friend = self.members[friend_id]
+            friend.checked = True
+
+            for their_friend_id in friend.friends:
+                their_friend = self.members[their_friend_id]
+                if not their_friend.checked:
+                    queue.append(their_friend_id)
+                    if their_friend.degree > friend.degree + 1:
+                        their_friend.degree = friend.degree + 1
+                if their_friend_id == id2:  
+                    if their_friend.degree <= degree:
+                        return True
+
+        self.reinitialize_persons()
+        return False
+
+    def show_graph(self):
+        """Print the state of the degree find.
+        used for debugging purposes.
+        """
+        for person_id in sorted(list(self.members.keys())):
+            print('{}{} {}'.format(
+                person_id, 
+                self.members[person_id].friends, 
+                self.members[person_id].degree,
+            ))
 
 if __name__ == '__main__':
-    antifraud = Antifraud(sys.argv)
+
+    argv = sys.argv
+    antifraud = Antifraud(argv)
+    antifraud.run()
     quit()
